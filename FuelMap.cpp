@@ -1,11 +1,71 @@
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
+#include <cstddef>
+#include <cassert>
 using namespace std;
+
+// --- Slab Allocator ---
+class SlabAllocator {
+private:
+    struct Block {
+        Block* next;
+    };
+    void* memory;
+    Block* freeList;
+    size_t blockSize;
+    size_t blockCount;
+
+public:
+    SlabAllocator(size_t blockSize, size_t blockCount)
+        : memory(nullptr), freeList(nullptr), blockSize(blockSize), blockCount(blockCount)
+    {
+        assert(blockSize >= sizeof(Block)); // must fit the next pointer
+        memory = ::operator new(blockSize * blockCount); // this allocates raw memory like a real ECU would do
+
+        // this initializes a free list 
+        freeList = reinterpret_cast<Block*>(memory);
+        Block* current = freeList;
+        for (size_t i = 1; i < blockCount; ++i) {
+            current->next = reinterpret_cast<Block*>(reinterpret_cast<char*>(memory) + i * blockSize);
+            current = current->next;
+        }
+        current->next = nullptr;
+    }
+
+    ~SlabAllocator() {
+        ::operator delete(memory);
+    }
+
+    void* allocate() {
+        if (!freeList) {
+            throw bad_alloc();
+        }
+        Block* block = freeList;
+        freeList = freeList->next;
+        return block;
+    }
+
+    void deallocate(void* ptr) {
+        Block* block = reinterpret_cast<Block*>(ptr);
+        block->next = freeList;
+        freeList = block;
+    }
+
+    void debugFreeList() const {
+        size_t count = 0;
+        Block* current = freeList;
+        while (current) {
+            ++count;
+            current = current->next;
+        }
+        std::cout << "Free blocks remaining: " << count << "\n";
+    }
+};
 
 // This turns from engine specific into a control framework
 struct SystemState {
-	virtual ~SystemState() = default; // takes in SystemState and returns a control output
+    virtual ~SystemState() = default; // takes in SystemState and returns a control output
 };
 
 struct ControlOutput {
@@ -14,12 +74,11 @@ struct ControlOutput {
 
 class Controller {
 public:
-	virtual ~Controller() = default;
-	virtual ControlOutput compute(const SystemState& state) const = 0;
+    virtual ~Controller() = default;
+    virtual ControlOutput compute(const SystemState& state) const = 0;
 };
 
 // --- Generic 2D Lookup Table ---
-
 template<typename T>
 class LookupTable2D {
 private:
@@ -141,14 +200,21 @@ class FuelController {
 private:
     FuelMap fuelMap;
     Injector injector;
+    SlabAllocator allocator; // allocator for demo
 
 public:
-    FuelController(FuelMap map, Injector inj) : fuelMap(map), injector(inj) {}
+    FuelController(FuelMap map, Injector inj)
+        : fuelMap(map), injector(inj), allocator(32, 10) {
+    } // allocate 32-byte blocks, 10 blocks
 
     double computePulseWidth(const EngineState& state) const {
         double afr = fuelMap.getFinalAFR(state.rpm, state.map, state.coolantTempC, state.measuredAFR);
         double fuelMass = state.airMass / afr;
         return injector.pulseWidth(fuelMass);
+    }
+
+    void debugAllocator() const {
+        allocator.debugFreeList(); // prints free blocks remaining
     }
 };
 
@@ -168,7 +234,7 @@ public:
     }
 };
 
-//main function
+// main function
 int main() {
     static const int rpmAxis[RPM_POINTS] = { 1000, 2000, 3000, 4000, 5000, 6000 };
     static const int loadAxis[LOAD_POINTS] = { 20, 40, 60, 80, 100 };
@@ -187,13 +253,15 @@ int main() {
     };
 
     FuelMap map(rpmAxis, loadAxis, afrTable);
-    Injector injector(0.02); //g/ms
+    Injector injector(0.02); // g/ms
 
     FuelController controller(map, injector);
 
     EngineState state{ 3500, 80, 0.45, 20.0, 14.0 };
 
     cout << "Injector Pulse Width: " << controller.computePulseWidth(state) << " ms" << endl;
+
+    controller.debugAllocator();
 
     return 0;
 }
