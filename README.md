@@ -1,2 +1,4 @@
-# FuelMap
-C++ ECU-style fuel map simulation with interpolation and closed-loop control
+This project simulates how an engine control unit (ECU) computes fuel injector pulse widths based on real-time engine conditions, modeling core concepts behind fuel maps, feedback control, and embedded constraints.
+I used fixed-size data structures and a custom memory allocator to mirror embedded environments where dynamic allocation is limited. The system is modular to separate engine state, control logic, and outputs, reflecting how real ECUs are structured for reliability and extensibility.
+The simulation runs as a standalone C++ program that steps through engine states and outputs computed injector pulse widths. Configuration parameters such as fuel maps and operating conditions can be modified to simulate different engines or scenarios.
+I focused on correctness, clarity, and system structure rather than physical accuracy or real sensor integration. The simulation models control logic and memory behavior but does not attempt to replicate real-time hardware timing or full thermodynamic accuracy.
